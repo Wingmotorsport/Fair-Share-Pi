@@ -1,0 +1,15 @@
+{
+  "name": "fair-share-pi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Wing Motorsport Fair Share Raspberry Pi starter",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
