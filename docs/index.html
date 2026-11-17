@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wing Motorsport | Fair Share</title>
+<style>
+:root{font-family:system-ui,Arial,sans-serif;color:#f7f9fd;background:#10141e}
+*{box-sizing:border-box}body{max-width:920px;padding:20px;margin:24px auto}
+h1{color:#ff3aae;margin-bottom:4px}h2{margin:4px 0 14px}
+p,small{color:#b7c3d4}section{background:#1b2330;border:1px solid #374358;border-radius:14px;padding:18px;margin:16px 0}
+input,button{font:inherit;border-radius:8px;padding:11px;margin:4px 3px;border:1px solid #4f647b}
+input{background:#101825;color:white;max-width:100%}
+button{background:#21afff;color:#09131d;font-weight:bold;cursor:pointer}button:hover{filter:brightness(1.12)}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.driver{border-top:1px solid #334053;padding:12px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+#message{min-height:1.3em;color:#ffc477}#code{font-weight:700;color:#21afff}
+strong{color:white}small{display:block;margin-top:8px}
+</style>
+</head>
+<body>
+<h1>Wing Motorsport</h1><p>Fair Share · Shared endurance lap tracking</p>
+<section>
+<h2>Race</h2>
+<div class="row"><input id="new-name" aria-label="Race name" placeholder="e.g. Daytona 24"><button id="create">Create race</button></div>
+<div class="row"><input id="join-code" aria-label="Race code" placeholder="16-character race code"><button id="join">Join race</button></div>
+<p id="message" role="status">Connecting to Supabase…</p>
+</section>
+<section id="dashboard" hidden>
+<h2 id="race-name"></h2>
+<p>Share code: <strong id="code"></strong> <button id="copy">Copy code</button></p>
+<p>Total laps: <strong id="total">0</strong> · Equal-share target: <strong id="target">0</strong></p>
+<div class="row"><input id="driver-name" aria-label="Driver name" placeholder="Driver name"><button id="add-driver">Add driver</button></div>
+<div id="drivers"></div>
+<small>Lap recording is manual. This version does not yet collect iRacing telemetry. All race members can add drivers and laps. Only share race codes with people you trust.</small>
+</section>
+<script type="module">
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.0";
+const supabase = createClient("https://gannbknqvppvkvzprxxp.supabase.co","sb_publishable_iXFWjob9s-JRzxff2vL84g_0_R_XmRq");
+const el = id => document.getElementById(id);
+let race = null, busy = false;
+const message = text => el("message").textContent = text;
+async function rpc(name, args) {
+ const {data,error} = await supabase.rpc(name,args);
+ if(error) throw error;
+ return data;
+}
+async function ensureSignedIn() {
+ const {data:{session},error} = await supabase.auth.getSession();
+ if(error) throw error;
+ if(!session) {
+  const response = await supabase.auth.signInAnonymously();
+  if(response.error) throw new Error("Anonymous sign-in failed. Enable Anonymous Sign-Ins in Supabase Authentication settings. "+response.error.message);
+ }
+}
+async function action(fn) {
+ if(busy)return;
+ busy=true;
+ try{message("");await fn()}
+ catch(error){message(error.message || "An unexpected error occurred")}
+ finally{busy=false}
+}
+async function openRace(code) {
+ const {data,error} = await supabase.from("fs_races").select("id,code,name").eq("code",code).maybeSingle();
+ if(error) throw error;
+ if(!data) throw new Error("Race not found or you have not joined this race.");
+ race=data;localStorage.setItem("fairShareRaceCode",race.code);
+ el("dashboard").hidden=false;el("race-name").textContent=race.name;el("code").textContent=race.code;
+ await refresh();
+ message("Connected to race "+race.name);
+}
+async function refresh() {
+ if(!race)return;
+ const {data,error} = await supabase.from("fs_drivers").select("id,name,laps").eq("race_id",race.id).order("name");
+ if(error)throw error;
+ const drivers=data||[];
+ const total=drivers.reduce((s,d)=>s+d.laps,0),target=drivers.length?Math.ceil(total/drivers.length):0;
+ el("total").textContent=total;el("target").textContent=target;
+ const root=el("drivers");root.replaceChildren();
+ for(const driver of drivers) {
+  const row=document.createElement("div");row.className="driver";
+  const label=document.createElement("span");label.textContent=driver.name+" — "+driver.laps+" laps · "+Math.max(0,target-driver.laps)+" to target";
+  const button=document.createElement("button");button.textContent="+1 completed lap";
+  button.addEventListener("click",()=>action(async()=>{await rpc("fs_record_lap",{p_driver_id:driver.id});await refresh()}));
+  row.append(label,button);root.append(row);
+ }
+}
+el("create").addEventListener("click",()=>action(async()=>{
+ const name=el("new-name").value.trim()||"Wing Motorsport Race";
+ const code=await rpc("fs_create_race",{p_name:name});
+ await openRace(code);
+}));
+el("join").addEventListener("click",()=>action(async()=>{
+ const code=el("join-code").value.trim().toUpperCase();
+ await rpc("fs_join_race",{p_code:code});await openRace(code);
+}));
+el("add-driver").addEventListener("click",()=>action(async()=>{
+ if(!race)throw new Error("Join a race first");
+ const name=el("driver-name").value.trim();
+ await rpc("fs_add_driver",{p_race_id:race.id,p_name:name});
+ el("driver-name").value="";await refresh();
+}));
+el("copy").addEventListener("click",()=>action(async()=>{await navigator.clipboard.writeText(race.code);message("Code copied")}));
+await action(async()=>{
+ await ensureSignedIn();
+ message("Connected. Create or join a race.");
+ const code=localStorage.getItem("fairShareRaceCode");
+ if(code) { try{await openRace(code)}catch{localStorage.removeItem("fairShareRaceCode");message("Connected. Enter a race code to join.")} }
+});
+setInterval(()=>{if(race && !document.hidden && !busy) refresh().catch(e=>message(e.message))},3000);
+</script>
+</body>
+</html>
