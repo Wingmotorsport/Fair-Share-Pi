@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wing Motorsport | Fair Share Pi</title>
+<style>
+:root{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#f6f7fc;background:#0d111a}
+*{box-sizing:border-box}body{max-width:850px;margin:40px auto;padding:0 18px}
+h1{margin-bottom:5px;color:#ff3aae}p{color:#aeb8c9}
+section{background:#171e2b;border:1px solid #303a4d;border-radius:14px;padding:20px;margin:16px 0}
+input,button,select{font:inherit;padding:11px;border-radius:8px;border:1px solid #526078}
+input,select{background:#0d1420;color:white;max-width:100%;margin:4px}
+button{background:#21afff;color:#08121e;font-weight:700;cursor:pointer;margin:4px}
+button.secondary{background:#2e3b4d;color:white}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:7px}
+.driver{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;border-top:1px solid #303a4d;padding:12px 0}
+.badge{color:#21afff;font-weight:700}
+#error{color:#ff9f9f;min-height:1.5em}
+small{color:#aeb8c9}code{color:#21afff}
+</style>
+</head>
+<body>
+<h1>Wing Motorsport</h1>
+<p>Fair Share Pi · Team endurance lap tracker</p>
+<section>
+<h2>Race</h2>
+<div class="row"><input id="raceName" placeholder="Race name" aria-label="Race name"><button id="create">Create race</button></div>
+<div class="row"><input id="code" placeholder="Race code" aria-label="Race code"><button id="join" class="secondary">Join race</button></div>
+</section>
+<div id="error" role="alert"></div>
+<section id="dashboard" hidden>
+<h2 id="heading"></h2><p>Race code: <strong id="raceCode"></strong> · Total completed laps: <strong id="total"></strong> · Equal-lap target: <strong id="target"></strong></p>
+<div class="row"><input id="driverName" placeholder="Driver name" aria-label="Driver name"><button id="addDriver">Add driver</button></div>
+<div id="drivers"></div>
+<small>Manual lap entry only. Live iRacing data integration has not been connected yet. Data is lost if the server restarts.</small>
+</section>
+<script>
+let currentCode="";
+const el=id=>document.getElementById(id);
+async function api(url,opts){
+ const resp=await fetch(url,{...opts,headers:{"Content-Type":"application/json"}});
+ const data=await resp.json();
+ if(!resp.ok)throw Error(data.error||"Request failed");
+ return data;
+}
+async function run(fn){try{el("error").textContent="";await fn()}catch(e){el("error").textContent=e.message}}
+function render(race){
+ currentCode=race.code;
+ el("dashboard").hidden=false;
+ el("heading").textContent=race.name;
+ el("raceCode").textContent=race.code;
+ el("code").value=race.code;
+ el("total").textContent=race.totalLaps;
+ el("target").textContent=race.targetPerDriver;
+ const root=el("drivers");root.replaceChildren();
+ race.drivers.forEach(driver=>{
+   const row=document.createElement("div");row.className="driver";
+   const details=document.createElement("span");
+   details.textContent=driver.name+" — "+driver.laps+" laps · "+driver.remainingToTarget+" to target";
+   const button=document.createElement("button");
+   button.textContent="+1 lap";button.addEventListener("click",()=>run(async()=>{
+      render(await api("/api/races/"+currentCode+"/laps",{method:"POST",body:JSON.stringify({driverId:driver.id})}));
+   }));
+   row.append(details,button);root.append(row);
+ });
+}
+el("create").addEventListener("click",()=>run(async()=>{
+ render(await api("/api/races",{method:"POST",body:JSON.stringify({name:el("raceName").value})}));
+}));
+el("join").addEventListener("click",()=>run(async()=>{
+ render(await api("/api/races/"+encodeURIComponent(el("code").value.trim().toUpperCase())));
+}));
+el("addDriver").addEventListener("click",()=>run(async()=>{
+ render(await api("/api/races/"+currentCode+"/drivers",{method:"POST",body:JSON.stringify({name:el("driverName").value})}));
+ el("driverName").value="";
+}));
+setInterval(()=>{if(currentCode)api("/api/races/"+currentCode).then(render).catch(()=>{})},3000);
+</script>
+</body>
+</html>
